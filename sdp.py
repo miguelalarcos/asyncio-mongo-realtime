@@ -173,7 +173,7 @@ def sdp(websocket, path):
     def send_nomethod(method_id, error):
         send({'msg': 'nomethod', 'id': method_id, 'error': error})
 
-    client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:liberal78@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
+    client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:secret@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
     registered_feeds = {}
     #feeds_with_observers = []
     user_id = 'miguel.alarcos@gmail.com' #None
