@@ -11,8 +11,8 @@ import json
 from datetime import datetime
 import pytz
 
-client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:secret@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
-    
+client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:liberal78@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
+db = client.test
 
 methods = {}
 
@@ -99,7 +99,7 @@ def can_delete(table):
     return decorate
 
 
-def sdp(websocket, path):
+async def sdp(websocket, path):
 
     async def watch(c, sub_id, query, name): 
         change_stream = None
@@ -117,6 +117,7 @@ def sdp(websocket, path):
             print('send initializing')
             send_initializing(sub_id)
             async for document in c.find(query):
+                send_added(sub_id, document)
                 print('send document', document)
             print('ready')
             send_ready(sub_id)
@@ -142,8 +143,10 @@ def sdp(websocket, path):
 
     def send(data):
         def helper(x):
-            if(isinstance(x, datetime)):
+            if isinstance(x, datetime):
                 return {'$date': x.timestamp()*1000}
+            elif isinstance(x, ObjectId):
+                return str(x)
             else:
                 return x
         message = json.dumps(data, default=helper)
@@ -155,14 +158,14 @@ def sdp(websocket, path):
     def send_error(id, error):
         send({'msg': 'error', 'id': id, 'error': error})
 
-    def send_added(table, sub_id, doc):
-        send({'msg': 'added', 'table': table, 'id': sub_id, 'doc': doc})
+    def send_added(sub_id, doc):
+        send({'msg': 'added', 'id': sub_id, 'doc': doc})
 
-    def send_changed(table, sub_id, doc):
-        send({'msg': 'changed', 'table': table, 'id': sub_id, 'doc': doc})
+    def send_changed(sub_id, doc):
+        send({'msg': 'changed', 'id': sub_id, 'doc': doc})
 
-    def send_removed(table, sub_id, doc_id):
-        send({'msg': 'removed', 'table': table, 'id': sub_id, 'doc_id': doc_id})
+    def send_removed(sub_id, doc_id):
+        send({'msg': 'removed', 'id': sub_id, 'doc_id': doc_id})
 
     def send_ready(sub_id):
         send({'msg': 'ready', 'id': sub_id})
@@ -198,7 +201,7 @@ def sdp(websocket, path):
                 if message == 'method':
                     params = data['params']
                     method = data['method']
-                    if method not in methods:
+                    if method not in methods.keys():
                         send_nomethod(id, 'method does not exist')
                     else:
                         #try:
@@ -210,11 +213,11 @@ def sdp(websocket, path):
                 elif message == 'sub':
                     name = data['name']
                     params = data['params']
-                    if name not in subs:
+                    if name not in subs.keys():
                         send_nosub(id, 'sub does not exist')
                     else:
                         c, query = subs[name](**params)
-                        registered_feeds = asyncio.create_task(watch(c, id, query, name))
+                        registered_feeds.append(asyncio.create_task(watch(c, id, query, name)))
                 elif message == 'unsub':
                     feed = registered_feeds[id]
                     feed.cancel()
