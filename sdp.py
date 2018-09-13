@@ -9,7 +9,7 @@ from bson import ObjectId
 from itertools import chain, repeat
 import json
 from datetime import datetime
-import pytz
+#import pytz
 
 client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:liberal78@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
 db = client.test
@@ -32,7 +32,7 @@ def sub(f):
 
 def check(attr, type):
     if not isinstance(attr, type):
-    raise CheckError(attr + ' is not of type ' + str(type))
+        raise CheckError(attr + ' is not of type ' + str(type))
 
 hooks = {'before_insert': [],
          'before_update': []
@@ -114,34 +114,38 @@ async def sdp(websocket, path):
                 await asyncio.sleep(x)
 
         async def do_find(query={}):
-            print('send initializing')
-            send_initializing(sub_id)
+            print('send initializing', query)
+            await send_initializing(sub_id)
             async for document in c.find(query):
-                send_added(sub_id, document)
+                await send_added(sub_id, document)
                 print('send document', document)
-            print('ready')
-            send_ready(sub_id)
+            print('send ready')
+            await send_ready(sub_id)
 
-        async with c.watch([{"$match": query}]) as change_stream:
-            asyncio.create_task(find_with_sleep(query))
-            async for change in change_stream:
-                if not done:
-                    done = True
-                    await do_find(query)
-                print('send delta', change)
-                #
-                type_ = change['operationType']
-                _id = str(change['fullDocument']['_id'])
-                if type_ == 'replace':
-                    send_changed(sub_id, change['fullDocument'])
-                elif type_ == 'insert':
-                    send_added(sub_id, change['fullDocument'])
-                elif type_ == 'delete':
-                    send_removed(sub_id, _id)
-                #
-            change_stream.close()
+        watch_query = {}
+        for key in query.keys():
+            watch_query['fullDocument.' + key] = query[key]
+        async with c.watch([{"$match": watch_query}]) as change_stream:
+            try:
+                asyncio.create_task(find_with_sleep(query))
+                async for change in change_stream:
+                    print('send delta', change)
+                    if not done:
+                        done = True
+                        await do_find(query)
+                    type_ = change['operationType']
+                    _id = str(change['fullDocument']['_id'])
+                    if type_ == 'replace':
+                        await send_changed(sub_id, change['fullDocument'])
+                    elif type_ == 'insert':
+                        await send_added(sub_id, change['fullDocument'])
+                    elif type_ == 'delete':
+                        await send_removed(sub_id, _id)
+            except:
+                print('closing stream')
+                change_stream.close()
 
-    def send(data):
+    async def send(data):
         def helper(x):
             if isinstance(x, datetime):
                 return {'$date': x.timestamp()*1000}
@@ -150,34 +154,38 @@ async def sdp(websocket, path):
             else:
                 return x
         message = json.dumps(data, default=helper)
-        websocket.send(message)
+        await websocket.send(message)
 
-    def send_result(id, result):
-        send({'msg': 'result', 'id': id, 'result': result})
+    async def send_result(id, result):
+        await send({'msg': 'result', 'id': id, 'result': result})
 
-    def send_error(id, error):
-        send({'msg': 'error', 'id': id, 'error': error})
+    async def send_error(id, error):
+        await send({'msg': 'error', 'id': id, 'error': error})
 
-    def send_added(sub_id, doc):
-        send({'msg': 'added', 'id': sub_id, 'doc': doc})
+    async def send_added(sub_id, doc):
+        doc['id'] = doc['_id']
+        del doc['_id']
+        await send({'msg': 'added', 'id': sub_id, 'doc': doc})
 
-    def send_changed(sub_id, doc):
-        send({'msg': 'changed', 'id': sub_id, 'doc': doc})
+    async def send_changed(sub_id, doc):
+        doc['id'] = doc['_id']
+        del doc['_id']
+        await send({'msg': 'changed', 'id': sub_id, 'doc': doc})
 
-    def send_removed(sub_id, doc_id):
-        send({'msg': 'removed', 'id': sub_id, 'doc_id': doc_id})
+    async def send_removed(sub_id, doc_id):
+        await send({'msg': 'removed', 'id': sub_id, 'doc_id': doc_id})
 
-    def send_ready(sub_id):
-        send({'msg': 'ready', 'id': sub_id})
+    async def send_ready(sub_id):
+        await send({'msg': 'ready', 'id': sub_id})
 
-    def send_initializing(sub_id, table):
-        send({'msg': 'initializing', 'id': sub_id, 'table': table})    
+    async def send_initializing(sub_id):
+        await send({'msg': 'initializing', 'id': sub_id})    
 
-    def send_nosub(sub_id, error):
-        send({'msg': 'nosub', 'id': sub_id, 'error': error})
+    async def send_nosub(sub_id, error):
+        await send({'msg': 'nosub', 'id': sub_id, 'error': error})
 
-    def send_nomethod(method_id, error):
-        send({'msg': 'nomethod', 'id': method_id, 'error': error})
+    async def send_nomethod(method_id, error):
+        await send({'msg': 'nomethod', 'id': method_id, 'error': error})
 
     registered_feeds = {}
     #feeds_with_observers = []
@@ -191,7 +199,8 @@ async def sdp(websocket, path):
             def helper(dct):
                 if '$date' in dct.keys():
                     d = datetime.utcfromtimestamp(dct['$date']/1000.0)
-                    return d.replace(tzinfo=pytz.UTC)
+                    return d
+                    #return d.replace(tzinfo=pytz.UTC)
                 return dct
             data = json.loads(msg, object_hook=helper)
             try:
@@ -202,22 +211,22 @@ async def sdp(websocket, path):
                     params = data['params']
                     method = data['method']
                     if method not in methods.keys():
-                        send_nomethod(id, 'method does not exist')
+                        await send_nomethod(id, 'method does not exist')
                     else:
                         #try:
                             method = methods[method]
                             result = await method(**params)
-                            send_result(id, result)
+                            await send_result(id, result)
                         #except Exception as e:
                         #  self.send_error(id, str(e) + ':' + str(e.__traceback__))
                 elif message == 'sub':
                     name = data['name']
                     params = data['params']
                     if name not in subs.keys():
-                        send_nosub(id, 'sub does not exist')
+                        await send_nosub(id, 'sub does not exist')
                     else:
                         c, query = subs[name](**params)
-                        registered_feeds.append(asyncio.create_task(watch(c, id, query, name)))
+                        registered_feeds[id] = asyncio.create_task(watch(c, id, query, name))
                 elif message == 'unsub':
                     feed = registered_feeds[id]
                     feed.cancel()
@@ -227,7 +236,7 @@ async def sdp(websocket, path):
                     #    del remove_observer_from_item[id]
                     #del registered_feeds[id]
             except KeyError as e:
-                send_error(id, str(e))
+                await send_error(id, str(e))
             #
     finally:
         #for k in remove_observer_from_item.keys():
@@ -244,7 +253,7 @@ async def insert(table, doc):
     else:
         before_insert(table, doc)
         result = await table.insert_one(doc)
-        return resutl
+        #return result
 
 def before_insert(collection, doc):
     for hook in hooks['before_insert']:
@@ -257,8 +266,8 @@ async def update(table, id, doc):
         raise MethodError('can not update ' + table + ', id: ' + str(id))
     else:
         before_update(table, doc)
-        result = await table.update({'_id': ObjectId(id)}, {'$set': doc}) 
-        return result
+        result = await table.update({'_id': ObjectId(id)}, {'$set': doc, '$currentDate': {'__timestamp': { '$type': "timestamp" }} }) 
+        #return result
 
 def before_update(collection, subdoc):
     for hook in hooks['before_update']:

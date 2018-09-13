@@ -8,7 +8,7 @@ async def add(a, b):
 
 @sub
 def x_less_than(max):
-    return db.test, {"$lt": {'x': max}}
+    return db.test, {'x': {'$lt': max}}
 
 def main():
     start_server = websockets.serve(sdp, 'localhost', 8888)
