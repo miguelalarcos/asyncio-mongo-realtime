@@ -19,7 +19,7 @@ methods = {}
 def method(f):
     #methods.append(f.__name__)
     async def helper(*args, **kwargs):
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
     methods[f.__name__] = helper
     return helper
 
