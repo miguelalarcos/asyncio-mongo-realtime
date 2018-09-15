@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 #import pytz
 
-client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:liberal78@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
+client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:secret@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
 db = client.test
 
 methods = {}
@@ -101,7 +101,7 @@ def can_delete(table):
 
 async def sdp(websocket, path):
 
-    async def watch(c, sub_id, query, name): 
+    async def watch(c, sub_id, query): #, name): 
         change_stream = None
         done = False
 
@@ -127,7 +127,10 @@ async def sdp(websocket, path):
             watch_query['fullDocument.' + key] = query[key]
         async with c.watch([{"$match": watch_query}]) as change_stream:
             try:
-                asyncio.create_task(find_with_sleep(query))
+                #asyncio.create_task(find_with_sleep(query))
+                print('before do find query')
+                await do_find(query)
+                print('after do find query')
                 async for change in change_stream:
                     print('send delta', change)
                     if not done:
@@ -135,14 +138,16 @@ async def sdp(websocket, path):
                         await do_find(query)
                     type_ = change['operationType']
                     _id = str(change['fullDocument']['_id'])
+                    print(_id, type_)
                     if type_ == 'replace':
                         await send_changed(sub_id, change['fullDocument'])
                     elif type_ == 'insert':
                         await send_added(sub_id, change['fullDocument'])
                     elif type_ == 'delete':
                         await send_removed(sub_id, _id)
-            except:
-                print('closing stream')
+                    print('end of elif')
+            except Exception as e:
+                print('closing stream', e)
                 change_stream.close()
 
     async def send(data):
@@ -151,6 +156,8 @@ async def sdp(websocket, path):
                 return {'$date': x.timestamp()*1000}
             elif isinstance(x, ObjectId):
                 return str(x)
+            elif isinstance(x, Timestamp):
+                return x.time
             else:
                 return x
         message = json.dumps(data, default=helper)
@@ -163,11 +170,13 @@ async def sdp(websocket, path):
         await send({'msg': 'error', 'id': id, 'error': error})
 
     async def send_added(sub_id, doc):
+        print('************=>', sub_id, doc)
         doc['id'] = doc['_id']
         del doc['_id']
         await send({'msg': 'added', 'id': sub_id, 'doc': doc})
 
     async def send_changed(sub_id, doc):
+        print('changed ***********=>', sub_id, doc)
         doc['id'] = doc['_id']
         del doc['_id']
         await send({'msg': 'changed', 'id': sub_id, 'doc': doc})
@@ -203,6 +212,7 @@ async def sdp(websocket, path):
                     #return d.replace(tzinfo=pytz.UTC)
                 return dct
             data = json.loads(msg, object_hook=helper)
+            print('>>>', data)
             try:
                 message = data['msg']
                 id = data['id']
@@ -220,13 +230,14 @@ async def sdp(websocket, path):
                         #except Exception as e:
                         #  self.send_error(id, str(e) + ':' + str(e.__traceback__))
                 elif message == 'sub':
-                    name = data['name']
+                    #name = data['name']
                     params = data['params']
-                    if name not in subs.keys():
+                    if id not in subs.keys():
                         await send_nosub(id, 'sub does not exist')
                     else:
-                        c, query = subs[name](**params)
-                        registered_feeds[id] = asyncio.create_task(watch(c, id, query, name))
+                        print('***********', params)
+                        c, query = subs[id](**params)
+                        registered_feeds[id] = asyncio.create_task(watch(c, id, query))  #, name))
                 elif message == 'unsub':
                     feed = registered_feeds[id]
                     feed.cancel()
@@ -266,7 +277,9 @@ async def update(table, id, doc):
         raise MethodError('can not update ' + table + ', id: ' + str(id))
     else:
         before_update(table, doc)
-        result = await table.update({'_id': ObjectId(id)}, {'$set': doc, '$currentDate': {'__timestamp': { '$type': "timestamp" }} }) 
+        #result = await table.update_one({'_id': ObjectId(id)}, {'$set': doc, '$currentDate': {'__timestamp': { '$type': "timestamp" }} }) 
+        result = await table.replace_one({'_id': ObjectId(id)}, doc) 
+        print(result.modified_count)
         #return result
 
 def before_update(collection, subdoc):

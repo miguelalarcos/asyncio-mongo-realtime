@@ -1,10 +1,14 @@
 import asyncio
 import websockets
-from sdp import sdp, method, sub, db
+from sdp import sdp, method, sub, db, update
 
 @method
 async def add(a, b):
     return a + b
+
+@method 
+async def increment(id, value):
+    await update(db.test, id, {'x': value})
 
 @sub
 def x_less_than(max):
