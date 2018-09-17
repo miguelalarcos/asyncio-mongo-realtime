@@ -11,7 +11,23 @@ import json
 from datetime import datetime
 #import pytz
 
-client = motor.motor_asyncio.AsyncIOMotorClient('mongodb+srv://miguel-alarcos:secret@cluster0-oo7pa.mongodb.net/test?retryWrites=true')
+from flatten_dict import flatten, unflatten
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+URI_DATABASE = os.getenv("URI_DATABASE")
+
+def point_reducer(k1, k2):
+    if k1 is None:
+        return k2
+    else:
+        return k1 + "." + k2
+
+def point_splitter(flat_key):
+    return flat_key.split(".")
+
+client = motor.motor_asyncio.AsyncIOMotorClient(URI_DATABASE)
 db = client.test
 
 methods = {}
@@ -105,13 +121,21 @@ async def sdp(websocket, path):
         change_stream = None
         done = False
 
-        async def find_with_sleep(query={}):
+        async def _find_with_sleep(query={}):
             for x in chain([4, 8, 16], repeat(32)):
                 if not done:
                     await do_find(query)
                 else:
                     break
                 await asyncio.sleep(x)
+
+        async def find_with_sleep(query={}):
+            if not done:
+                await do_find(query)
+            await asyncio.sleep(4)
+            if not done:
+                done = True
+                await do_find(query)
 
         async def do_find(query={}):
             print('send initializing', query)
@@ -127,10 +151,8 @@ async def sdp(websocket, path):
             watch_query['fullDocument.' + key] = query[key]
         async with c.watch([{"$match": watch_query}]) as change_stream:
             try:
-                #asyncio.create_task(find_with_sleep(query))
-                print('before do find query')
-                await do_find(query)
-                print('after do find query')
+                asyncio.create_task(find_with_sleep(query))
+                #await do_find(query)
                 async for change in change_stream:
                     print('send delta', change)
                     if not done:
@@ -138,14 +160,14 @@ async def sdp(websocket, path):
                         await do_find(query)
                     type_ = change['operationType']
                     _id = str(change['fullDocument']['_id'])
-                    print(_id, type_)
+
                     if type_ == 'replace':
                         await send_changed(sub_id, change['fullDocument'])
                     elif type_ == 'insert':
                         await send_added(sub_id, change['fullDocument'])
                     elif type_ == 'delete':
                         await send_removed(sub_id, _id)
-                    print('end of elif')
+
             except Exception as e:
                 print('closing stream', e)
                 change_stream.close()
@@ -170,13 +192,11 @@ async def sdp(websocket, path):
         await send({'msg': 'error', 'id': id, 'error': error})
 
     async def send_added(sub_id, doc):
-        print('************=>', sub_id, doc)
         doc['id'] = doc['_id']
         del doc['_id']
         await send({'msg': 'added', 'id': sub_id, 'doc': doc})
 
     async def send_changed(sub_id, doc):
-        print('changed ***********=>', sub_id, doc)
         doc['id'] = doc['_id']
         del doc['_id']
         await send({'msg': 'changed', 'id': sub_id, 'doc': doc})
@@ -235,8 +255,8 @@ async def sdp(websocket, path):
                     if id not in subs.keys():
                         await send_nosub(id, 'sub does not exist')
                     else:
-                        print('***********', params)
                         c, query = subs[id](**params)
+                        c = db[c]
                         registered_feeds[id] = asyncio.create_task(watch(c, id, query))  #, name))
                 elif message == 'unsub':
                     feed = registered_feeds[id]
@@ -254,6 +274,7 @@ async def sdp(websocket, path):
         #    for remove in remove_observer_from_item[k].values():
         #        remove()
         for feed in registered_feeds.values():
+            print('cancelling feed')
             feed.cancel()
    
 
@@ -264,23 +285,26 @@ async def insert(table, doc):
     else:
         before_insert(table, doc)
         result = await table.insert_one(doc)
-        #return result
+        return result.inserted_id
 
 def before_insert(collection, doc):
     for hook in hooks['before_insert']:
         hook(collection, doc)
 
 async def update(table, id, doc):
+    table = db[table]
     old_doc = await table.find_one({'_id': ObjectId(id)})
     cans = [c(table, doc, old_doc) for c in can['update']]
     if not all(cans):
         raise MethodError('can not update ' + table + ', id: ' + str(id))
     else:
         before_update(table, doc)
-        #result = await table.update_one({'_id': ObjectId(id)}, {'$set': doc, '$currentDate': {'__timestamp': { '$type': "timestamp" }} }) 
+        #doc = old_doc.update(doc) # improve this with dot notation
+        old_doc = flatten(old_doc, reducer=point_reducer)
+        old_doc.update(doc)
+        doc = unflatten(doc, splitter=point_splitter)
         result = await table.replace_one({'_id': ObjectId(id)}, doc) 
-        print(result.modified_count)
-        #return result
+        return result.modified_count
 
 def before_update(collection, subdoc):
     for hook in hooks['before_update']:
