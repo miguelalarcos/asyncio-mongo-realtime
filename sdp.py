@@ -79,41 +79,6 @@ class MethodError(Exception):
 class CheckError(Exception):
   pass
 
-can = {'update': [], 'insert': [], 'delete': []}
-
-def can_insert(table):
-    def decorate(f):
-        def helper(t, doc):
-            if t == table:
-                return f(doc)
-            else:
-                return True
-        can['insert'].append(helper)
-        return f # does not matter f or helper, it's not going to be used directly
-    return decorate
-
-def can_update(table):
-    def decorate(f):
-        def helper(t, doc, old_doc):
-            if t == table:
-                return f(doc, old_doc)
-            else:
-                return True
-        can['update'].append(helper)
-        return f # does not matter f or helper, it's not going to be used directly
-    return decorate
-
-def can_delete(table):
-    def decorate(f):
-        def helper(t, old_doc):
-            if t == table:
-                return f(old_doc)
-            else:
-                return True
-        can['delete'].append(helper)
-        return f # does not matter f or helper, it's not going to be used directly
-    return decorate
-
 
 async def sdp(websocket, path):
 
@@ -130,19 +95,19 @@ async def sdp(websocket, path):
                 await asyncio.sleep(x)
 
         async def find_with_sleep(query={}):
-            if not done:
-                await do_find(query)
+            nonlocal done
             await asyncio.sleep(4)
             if not done:
                 done = True
+                print('do find after sleep 4')
                 await do_find(query)
 
         async def do_find(query={}):
             print('send initializing', query)
             await send_initializing(sub_id)
             async for document in c.find(query):
-                await send_added(sub_id, document)
                 print('send document', document)
+                await send_added(sub_id, document)                
             print('send ready')
             await send_ready(sub_id)
 
@@ -151,12 +116,14 @@ async def sdp(websocket, path):
             watch_query['fullDocument.' + key] = query[key]
         async with c.watch([{"$match": watch_query}]) as change_stream:
             try:
+                print('first do find')
+                await do_find(query)
                 asyncio.create_task(find_with_sleep(query))
-                #await do_find(query)
                 async for change in change_stream:
                     print('send delta', change)
                     if not done:
                         done = True
+                        print('second do find')
                         await do_find(query)
                     type_ = change['operationType']
                     _id = str(change['fullDocument']['_id'])
@@ -168,8 +135,8 @@ async def sdp(websocket, path):
                     elif type_ == 'delete':
                         await send_removed(sub_id, _id)
 
-            except Exception as e:
-                print('closing stream', e)
+            finally: #Exception as e:
+                print('closing stream')
                 change_stream.close()
 
     async def send(data):
@@ -245,7 +212,7 @@ async def sdp(websocket, path):
                     else:
                         #try:
                             method = methods[method]
-                            result = await method(**params)
+                            result = await method(user_id, **params)
                             await send_result(id, result)
                         #except Exception as e:
                         #  self.send_error(id, str(e) + ':' + str(e.__traceback__))
@@ -255,7 +222,7 @@ async def sdp(websocket, path):
                     if id not in subs.keys():
                         await send_nosub(id, 'sub does not exist')
                     else:
-                        c, query = subs[id](**params)
+                        c, query = subs[id](user_id, **params)
                         c = db[c]
                         registered_feeds[id] = asyncio.create_task(watch(c, id, query))  #, name))
                 elif message == 'unsub':
@@ -291,26 +258,28 @@ def before_insert(collection, doc):
     for hook in hooks['before_insert']:
         hook(collection, doc)
 
-async def update(table, id, doc):
+"""
+async def update(DocClass, id, doc, can=None):
+    table = DocClass.collection
     table = db[table]
     old_doc = await table.find_one({'_id': ObjectId(id)})
-    cans = [c(table, doc, old_doc) for c in can['update']]
-    if not all(cans):
-        raise MethodError('can not update ' + table + ', id: ' + str(id))
+    if old_doc is None:
+        raise MethodError('document not found', id, DocClass.collection)
+    if can and not can():
+        raise MethodError('can not update ' + DocClass.collection + ', id: ' + str(id))
     else:
-        before_update(table, doc)
-        #doc = old_doc.update(doc) # improve this with dot notation
-        old_doc = flatten(old_doc, reducer=point_reducer)
-        old_doc.update(doc)
-        doc = unflatten(doc, splitter=point_splitter)
-        result = await table.replace_one({'_id': ObjectId(id)}, doc) 
+        #before_update(table, doc)
+        doc_tmp = DocClass(old_doc)
+        for key, value in doc.items():
+            doc_tmp.update(key, value)
+        updated_doc = unflatten(doc_tmp.doc, splitter=point_splitter)
+        result = await table.replace_one({'_id': ObjectId(id)}, updated_doc) 
         return result.modified_count
 
 def before_update(collection, subdoc):
     for hook in hooks['before_update']:
         hook(collection, subdoc)
 
-"""
 @gen.coroutine
 def soft_delete(self, table, id):
     conn = yield self.conn

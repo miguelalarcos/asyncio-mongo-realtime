@@ -1,3 +1,6 @@
+from bson import ObjectId
+from sdp import db
+
 class SetError(Exception):
     pass
 
@@ -18,11 +21,45 @@ class Doc:
     reserved_kw = ['__get', '__set', '__set_document', '__get_document', \
                    '__create_document', '__ownership', '__set_default', \
                    '__get_default']
-    def __init__(self, doc):
+    def __init__(self, id=None, doc=None, user_id=None):
+        self.id = id
         self.doc = doc
+        self.user_id = user_id
+        table = self.collection
+        self.table = db[table]
+
+    async def insert(self):
+        self.id = await self.insert(doc)
+        
+    async def load(self):
+        #table = self.collection
+        #table = db[table]
+        self.doc = await self.table.find_one({'_id': ObjectId(self.id)})
+        if self.doc is None:
+            raise SetError('document not found', self.id, self.collection)
+        return self
 
     def __repr__(self):
         return str(self.doc)
+
+    def __getitem__(self, key):
+        return self.doc[key]
+
+    def __setitem__(self, key, value):
+        self.doc[key] = value
+
+    def can_update(self):
+        return True
+
+    async def set(self, doc):
+        if not self.can_update():
+            raise SetError('can not update ' + self.collection + ', id: ' + str(self.id))
+        else:
+            for key, value in doc.items():
+                self.update(key, value)
+            #updated_doc = unflatten(doc_tmp.doc, splitter=point_splitter)
+            result = await self.table.replace_one({'_id': ObjectId(self.id)}, self.doc) 
+            return result.modified_count
 
     def update(self, path, value):
         doc = self.doc
