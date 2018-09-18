@@ -13,9 +13,6 @@ class PathError(Exception):
 public = lambda *args: True
 never  = lambda *args: False
 
-class Schema:
-    pass
-  
 
 class Doc:
     reserved_kw = ['__get', '__set', '__set_document', '__get_document', \
@@ -28,12 +25,14 @@ class Doc:
         table = self.collection
         self.table = db[table]
 
-    async def insert(self):
-        self.id = await self.insert(doc)
-        
+    async def create(self):
+        if not self.can_insert():
+            raise SetError('can not insert ' + self.collection + ', doc: ' + str(self.doc))
+        doc = self.insert()
+        result = await self.table.insert_one(doc)
+        self.id = result.inserted_id
+
     async def load(self):
-        #table = self.collection
-        #table = db[table]
         self.doc = await self.table.find_one({'_id': ObjectId(self.id)})
         if self.doc is None:
             raise SetError('document not found', self.id, self.collection)
@@ -48,8 +47,11 @@ class Doc:
     def __setitem__(self, key, value):
         self.doc[key] = value
 
+    def can_insert(self):
+        return False
+
     def can_update(self):
-        return True
+        return False
 
     async def set(self, doc):
         if not self.can_update():
@@ -61,9 +63,49 @@ class Doc:
             result = await self.table.replace_one({'_id': ObjectId(self.id)}, self.doc) 
             return result.modified_count
 
+    def insert(self, document=None):
+        if not document:
+            document = self.doc
+        schema = self.schema
+        ret = {}
+        set_document = set(document.keys())
+        set_schema = set(schema.keys()) - set(self.reserved_kw)
+        intersection =  set_document & set_schema 
+        missing = set_schema - set_document
+        if len(set_document - set_schema) > 0:
+            raise Exception('keywords not in schema')
+
+        for key in missing | intersection:            
+            if schema[key]['type'].__class__ == Schema:                
+                if document.get(key):                    
+                    ret[key] = schema[key]['type'].insert(document[key])
+            elif type(schema[key]['type']) is list:
+                if document.get(key):
+                    ret[key] = [schema[key]['type'][0].insert(k) for k in document[key]]
+            elif 'computed' not in schema[key]:
+                validation = schema[key].get('validation', public)
+                required = schema[key].get('required', False)
+                mtype = schema[key]['type']
+                initial = schema[key].get('initial')
+                initial = initial and initial() 
+                v = document.get(key, initial)
+                
+                if required and v is None:
+                    raise ValidationError('required')
+
+                if v is not None and (not isinstance(v, mtype) or not validation(v)):
+                    raise ValidationError('not valid prop or missing', key)
+                if key in intersection or initial is not None: 
+                    ret[key] = document.get(key, initial)
+            else:
+                create = schema[key].get('computed')
+                val = create(document) 
+                ret[key] = val
+        return ret
+
     def update(self, path, value):
         doc = self.doc
-        schema = self.schema.schema
+        schema = self.schema
         set_default = schema.get('__set_default', never)
         validation_default = public
         paths = path.split('.')
@@ -94,7 +136,7 @@ class Doc:
                 except IndexError:
                     raise PathError('path does not exist in doc', key)
             
-            if issubclass(schema, Schema) and key != last:                
+            if issubclass(schema, Doc) and key != last:                
                 try:                
                     doc = doc[key]
                     schema = schema.schema
@@ -103,7 +145,7 @@ class Doc:
 
         if type(schema) is list:
             raise SetError('can not set an array')
-        if issubclass(schema, Schema):
+        if issubclass(schema, Doc):
             schema = schema.schema
             set_default = schema.get('__set_default', never)
             keys = [k  for k in schema.keys() if k not in self.reserved_kw] 

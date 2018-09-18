@@ -1,9 +1,11 @@
 import asyncio
 import websockets
 from sdp import sdp, method, sub
-from schema import Doc, Schema, public
+from schema import Doc, public
 
-class XSchema(Schema):
+
+class XDoc(Doc):
+    collection = 'test'
     schema = {
         "__set_default": public,
         'x': {
@@ -12,21 +14,22 @@ class XSchema(Schema):
         }
     }  
 
+    def can_insert(self):
+        return self.user_id is not None
+
     def can_update(self):
         return self['user_id'] == self.user_id
 
-class XDoc(Doc):
-    collection = 'test'
-    schema = XSchema
-
 @method
 async def add(user_id, a, b):
+    doc = XDoc(doc={'x': -3}, user_id=user_id)
+    await doc.create()
     return a + b
 
 @method 
 async def set_x(user_id, id, value):
     #await update(XDoc, id, {'x': value}, can=lambda old: old.user_id == user_id)
-    doc = await XDoc(id, user_id).load()
+    doc = await XDoc(id=id, user_id=user_id).load()
     #doc = await XDoc.create(id, user_id)
     await doc.set({'x': value})
 

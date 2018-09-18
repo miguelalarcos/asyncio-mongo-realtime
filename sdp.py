@@ -99,7 +99,6 @@ async def sdp(websocket, path):
             await asyncio.sleep(4)
             if not done:
                 done = True
-                print('do find after sleep 4')
                 await do_find(query)
 
         async def do_find(query={}):
@@ -116,14 +115,12 @@ async def sdp(websocket, path):
             watch_query['fullDocument.' + key] = query[key]
         async with c.watch([{"$match": watch_query}]) as change_stream:
             try:
-                print('first do find')
                 await do_find(query)
                 asyncio.create_task(find_with_sleep(query))
                 async for change in change_stream:
                     print('send delta', change)
                     if not done:
                         done = True
-                        print('second do find')
                         await do_find(query)
                     type_ = change['operationType']
                     _id = str(change['fullDocument']['_id'])
@@ -135,9 +132,9 @@ async def sdp(websocket, path):
                     elif type_ == 'delete':
                         await send_removed(sub_id, _id)
 
-            finally: #Exception as e:
-                print('closing stream')
-                change_stream.close()
+            finally: 
+                print('finally stream')
+                #change_stream.close()
 
     async def send(data):
         def helper(x):
@@ -182,6 +179,11 @@ async def sdp(websocket, path):
 
     async def send_nomethod(method_id, error):
         await send({'msg': 'nomethod', 'id': method_id, 'error': error})
+
+    @method
+    async def login(user):
+        nonlocal user_id
+        user_id = user
 
     registered_feeds = {}
     #feeds_with_observers = []
@@ -244,7 +246,7 @@ async def sdp(websocket, path):
             print('cancelling feed')
             feed.cancel()
    
-
+"""
 async def insert(table, doc):
     cans = [c(table, doc) for c in can['insert']]
     if not all(cans):
@@ -258,7 +260,6 @@ def before_insert(collection, doc):
     for hook in hooks['before_insert']:
         hook(collection, doc)
 
-"""
 async def update(DocClass, id, doc, can=None):
     table = DocClass.collection
     table = db[table]
