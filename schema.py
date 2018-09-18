@@ -12,7 +12,7 @@ class PathError(Exception):
 
 public = lambda *args: True
 never  = lambda *args: False
-
+CURRENT_USER = object()
 
 class Doc:
     reserved_kw = ['__get', '__set', '__set_document', '__get_document', \
@@ -23,7 +23,8 @@ class Doc:
         self.doc = doc
         self.user_id = user_id
         table = self.collection
-        self.table = db[table]
+        if table:
+            self.table = db[table]
 
     async def create(self):
         if not self.can_insert():
@@ -31,6 +32,7 @@ class Doc:
         doc = self.insert()
         result = await self.table.insert_one(doc)
         self.id = result.inserted_id
+        #print(self.id)
 
     async def load(self):
         self.doc = await self.table.find_one({'_id': ObjectId(self.id)})
@@ -76,18 +78,22 @@ class Doc:
             raise Exception('keywords not in schema')
 
         for key in missing | intersection:            
-            if schema[key]['type'].__class__ == Schema:                
+            #if schema[key]['type'].__class__ == Schema:         
+            if issubclass(schema[key]['type'], Doc):       
                 if document.get(key):                    
-                    ret[key] = schema[key]['type'].insert(document[key])
+                    ret[key] = schema[key]['type']().insert(document[key])
             elif type(schema[key]['type']) is list:
                 if document.get(key):
-                    ret[key] = [schema[key]['type'][0].insert(k) for k in document[key]]
+                    ret[key] = [schema[key]['type'][0]().insert(k) for k in document[key]]
             elif 'computed' not in schema[key]:
                 validation = schema[key].get('validation', public)
                 required = schema[key].get('required', False)
                 mtype = schema[key]['type']
                 initial = schema[key].get('initial')
-                initial = initial and initial() 
+                if initial == CURRENT_USER:
+                    initial = self.user_id
+                else:
+                    initial = initial and initial() 
                 v = document.get(key, initial)
                 
                 if required and v is None:
@@ -144,14 +150,25 @@ class Doc:
                     raise PathError('path does not exist in doc', key)
 
         if type(schema) is list:
-            raise SetError('can not set an array')
-        if issubclass(schema, Doc):
+            schema = schema[0]
+            if issubclass(schema, Doc):
+                if '$pull' in value:
+                    doc[key] = [k for k in doc[key] if k != value['$pull']]
+                else:
+                    doc[key].append(schema(value).insert())
+            else:
+                if '$pull' in value:
+                    doc[key] = [k for k in doc[key] if k != value['$pull']]
+                else:
+                    doc[key].append(value)
+        elif issubclass(schema, Doc):
             schema = schema.schema
             set_default = schema.get('__set_default', never)
             keys = [k  for k in schema.keys() if k not in self.reserved_kw] 
+            ret = {}
             for k in keys:
                 try:
-                    schema[k]
+                    #schema[k]
                     value[k]
                     set_ = schema[k].get('set', set_default)
                 except KeyError:
@@ -163,6 +180,7 @@ class Doc:
                     raise SetError('can not set', k, value)    
                 if not schema[k]['type'] == type(value[k]) or not schema[k].get('validation', public)(value[k]):
                     raise ValidationError('can not set (validation)', k, value)
+                ret[k] = value[k]
                 doc[key].update({k: value[k]})
 
         elif isinstance(value, schema) and validation(value):

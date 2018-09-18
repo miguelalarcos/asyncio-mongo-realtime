@@ -1,7 +1,7 @@
 import asyncio
 import websockets
 from sdp import sdp, method, sub
-from schema import Doc, public
+from schema import Doc, public, never, CURRENT_USER
 
 
 class XDoc(Doc):
@@ -11,6 +11,11 @@ class XDoc(Doc):
         'x': {
             'type': int,
             'validation': lambda v: v > -1000
+        },
+        'user_id': {
+            'type': str,
+            'initial': CURRENT_USER,
+            'set': never
         }
     }  
 
@@ -22,7 +27,7 @@ class XDoc(Doc):
 
 @method
 async def add(user_id, a, b):
-    doc = XDoc(doc={'x': -3}, user_id=user_id)
+    doc = XDoc(doc={'x': -33}, user_id=user_id)
     await doc.create()
     return a + b
 

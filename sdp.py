@@ -1,5 +1,6 @@
 # SDP: Subscription Data Protocol
 
+import traceback
 from asyncio import get_event_loop
 import asyncio
 import websockets
@@ -180,6 +181,8 @@ async def sdp(websocket, path):
     async def send_nomethod(method_id, error):
         await send({'msg': 'nomethod', 'id': method_id, 'error': error})
 
+    global method
+
     @method
     async def login(user):
         nonlocal user_id
@@ -212,12 +215,13 @@ async def sdp(websocket, path):
                     if method not in methods.keys():
                         await send_nomethod(id, 'method does not exist')
                     else:
-                        #try:
+                        try:
                             method = methods[method]
                             result = await method(user_id, **params)
                             await send_result(id, result)
-                        #except Exception as e:
-                        #  self.send_error(id, str(e) + ':' + str(e.__traceback__))
+                        except Exception as e:
+                          send_error(id, str(e))
+                          traceback.print_tb(e.__traceback__)
                 elif message == 'sub':
                     #name = data['name']
                     params = data['params']
