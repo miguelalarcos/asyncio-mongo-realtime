@@ -27,7 +27,7 @@ class XDoc(Doc):
 
 @method
 async def add(user_id, a, b):
-    doc = XDoc(doc={'x': -33}, user_id=user_id)
+    doc = XDoc(doc={'x': 3}, user_id=user_id)
     await doc.create()
     return a + b
 
@@ -40,7 +40,8 @@ async def set_x(user_id, id, value):
 
 @sub
 def x_less_than(user_id, max):
-    return 'test', {'x': {'$lt': max}}
+    #return 'test', {'x': {'$lt': max}, 'user_id': user_id}
+    return 'test', {'x': {'$ne': max}, 'user_id': user_id}
 
 def main():
     start_server = websockets.serve(sdp, 'localhost', 8888)

@@ -124,8 +124,12 @@ async def sdp(websocket, path):
                         done = True
                         await do_find(query)
                     type_ = change['operationType']
-                    _id = str(change['fullDocument']['_id'])
+                    #_id = str(change['fullDocument']['_id'])
+                    _id = str(change['documentKey']['_id'])
 
+                    print(type_)
+
+                    #type_ == 'update':
                     if type_ == 'replace':
                         await send_changed(sub_id, change['fullDocument'])
                     elif type_ == 'insert':
@@ -136,6 +140,7 @@ async def sdp(websocket, path):
             finally: 
                 print('finally stream')
                 #change_stream.close()
+        print('***')
 
     async def send(data):
         def helper(x):
@@ -220,8 +225,9 @@ async def sdp(websocket, path):
                             result = await method(user_id, **params)
                             await send_result(id, result)
                         except Exception as e:
-                          send_error(id, str(e))
+                          await send_error(id, str(e))
                           traceback.print_tb(e.__traceback__)
+                          print(e)
                 elif message == 'sub':
                     #name = data['name']
                     params = data['params']
